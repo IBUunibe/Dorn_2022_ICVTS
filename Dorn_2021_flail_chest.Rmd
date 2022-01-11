@@ -1,0 +1,484 @@
+---
+title: "Code from paper 'Operative versus non-operative management of rib fractures in flail chest after cardiopulmonary resuscitation', Dorn et al."
+author: "Simone Oberhaensli, Interfaculty Bioinformatics Unit, University of Bern"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+  fontsize: 11pt
+
+---
+
+
+
+
+## Introduction
+For all analyses a significance threshold of p < 0.05 is applied.
+
+```{r preable, eval=F, echo=F}
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+```
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load libraries
+library("ggplot2")
+library("tidyr")
+library("RColorBrewer")
+library("pca3d")
+library("ggpubr")
+library("lmerTest")
+library("car")
+library("lmtest")
+
+
+# settings for boxplots with bullets and labels
+xnudge1 = 1.4
+xnudge2 = 0.1
+sz1 = 3
+sz2 = 1
+
+```
+
+
+
+```{r data_prep, eval=T, echo=F}
+
+# Read data from RDS object
+# These are the original data, except that palliative care patients are already 
+# removed
+dat <- readRDS("/Users/simone/Projects/misc_short_projects/Dorn_Data_osteosynthesis/ANOVA/p555_data.rds") # Todo: Adjust this part later!!!
+
+
+# for better overview create dataframe with most relevant variables for the analysis
+dat.t <- dat[,c("pairs", "group","age", "frac.Sternum", "Lung.contusion", "GCS", 
+                 "Respirator.time", "Resp.Time.after.OR", "Tracheotomy", 
+                 "Pneumonia", "Neurology", "GI.bleeding", "Death", "female")]
+
+# the lines below are needed to analyse time after OP for Sx group
+# for this we first need to create a new variable which consists of the total 
+# time for noSX group and the time after surgery for the Sx group
+dat.t$newtime <- as.vector(cbind(c(dat.t[1:10,"Respirator.time"], 
+                                   dat.t[11:23,"Resp.Time.after.OR"])))
+
+# some statistics regarding cohort size
+n.tot.obs <- nrow(dat.t)
+n.nodec.obs <- nrow(dat.t[dat.t$Death != "1",])
+
+```
+
+
+## Analyses with both groups as one cohort
+
+In the following section we perform some comparisons between the group that underwent 
+stabilization surgery (Sx) and the group that was treated conservatively (noSx).
+
+
+
+### Primary endpoint: time spent on respirator
+
+Is there a significant difference in the number of days that patients spent on 
+the respirator between the groups Sx and noSx?  
+The cohort includes `r n.nodec.obs` individuals (deceased patients excluded).
+
+```{r time_ttest, eval=T, echo=F, fig.height = 5, fig.width = 8}
+
+dat.ttest <- dat.t[dat.t$Death != "1",]
+cat("Data are approximatelly normally distributed")
+qqPlot(dat.ttest$Respirator.time, ylab = "time on respirator", main = "Total 
+       time for Sx and noSx group")
+qqPlot(dat.ttest$newtime, ylab = "time on respirator", main = "noSx total time 
+       and Sx time after surgery")
+
+# for save data handling create individual dfs for each group
+d.Sx <- dat.ttest[dat.ttest$group == 'Sx',]
+d.nSx <- dat.ttest[dat.ttest$group == 'noSx',]
+
+cat("There is no significant difference of total time spent on respirator between 
+    the Sx and noSx group")
+t.test(d.nSx$Respirator.time, d.Sx$Respirator.time)
+
+
+p.tt <- ggboxplot(dat.ttest, x = "group", y = "Respirator.time",
+          color = "group", palette = c("#00AFBB", "#E7B800"),
+          outlier.shape = NA) + 
+  geom_jitter(height = 0, width = 0.05) +
+  labs(title = "Days on respirator", subtitle = "noSx total time vs Sx total time",
+       x = "group",
+       y = "days")
+# Add pvalue
+pp.tt <- p.tt + stat_compare_means(method = "t.test", 
+                               paired = FALSE,
+                               hjust = -0.6)
+
+
+
+cat("There is a significant difference if the time on the respirator after 
+    surgery for the Sx group is compared to the total time of the noSx group")
+t.test(d.nSx$newtime, d.Sx$newtime)
+
+
+p.nt <- ggboxplot(dat.ttest, x = "group", y = "newtime",
+          color = "group", palette = c("#00AFBB", "#E7B800"),
+          outlier.shape = NA) + 
+  geom_jitter(height = 0, width = 0.05) +
+  labs(title = "Days on respirator", subtitle = "noSx total time vs Sx time after surgery",
+       x = "group",
+       y = "days")
+# Add pvalue
+pp.nt <- p.nt + stat_compare_means(method = "t.test", 
+                               paired = FALSE,
+                               hjust = -0.6)
+
+ggarrange(pp.tt, pp.nt, ncol = 2, nrow = 1)
+```
+
+
+### Secondary endpoints: Overrepresentation test of tracheotomies, pneumonia, neurological deterioration and death
+The cohort includes `r n.tot.obs` individuals.  
+All tested variables show now dependence from the group (Sx or noSx).
+
+```{r fisher_tests, eval=T, echo=F}
+
+cat("Tracheotomies are not significantly overrepresented in any of the two groups")
+(t.trach <- xtabs(~ group + Tracheotomy, data = dat.t))
+fisher.test(t.trach)
+
+
+cat("Pneumonia is not significantly overrepresented in any of the two groups")
+(t.pneu <- xtabs(~ group + Pneumonia, data = dat.t))
+fisher.test(t.pneu)
+
+
+cat("Neurological complications are not significantly overrepresented in any 
+    of the two groups?")
+(t.neu <- xtabs(~ group + Neurology, data = dat.t))
+fisher.test(t.neu)
+
+
+cat("Deceased patients are not significantly overrepresented in any of the two groups")
+(t.death <- xtabs(~ group + Death, data = dat.t))
+fisher.test(t.death)
+
+
+```
+
+
+
+## Linear regression analysis of both group as one cohort
+
+Approach: use linear models combined with backward variable selection and likelihood ratio tests to reduce model complexity and identify predictors that have an influence on the response variable 'Respirator.time' (= total time on respirator starting from admission to ICU for both groups) and 'newtime' (time on respirator after the surgery for the Sx group), respectively.
+
+The cohort includes `r n.nodec.obs` individuals (deceased patients excluded).
+
+#### Linear model, data from both groups, y = total respiratory time
+
+```{r lm_tot_time, eval=T, echo=F}
+# the full model includes all predictors except comorbidities as these are not informative
+# we also exclude frac.Rib.unilateral and GI bleeding because the frequency is very low
+mt.full <- lm(Respirator.time ~ group + age + GCS + female + Tracheotomy + 
+                frac.Sternum + Lung.contusion + 
+                Pneumonia + Neurology, data = dat.t[dat.t$Death != "1",])
+
+summary(mt.full)
+
+# run backward selection
+mt.bkw <- step(mt.full)
+summary(mt.bkw)
+# the reduced model is equivalent to the full model and can replace the latter
+lrtest(mt.full, mt.bkw)
+confint(mt.bkw)
+
+cat("Residual plots of the reduced model")
+par(mfrow = c(2,2))
+plot(mt.bkw)
+par(mfrow=c(1,2))
+
+dat.nodeath <- dat.t[dat.t$Death != "1",]
+g1 <- ggplot(dat.nodeath, aes(x=Tracheotomy, y=Respirator.time, label = pairs)) +
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=group)) + geom_text(nudge_x = xnudge2, size = sz1) +
+  labs(x = "Tracheotomy no/yes", y = "days on respirator")
+g2 <- ggplot(dat.nodeath, aes(x=Lung.contusion, y=Respirator.time, label = pairs)) +
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=group)) + geom_text(nudge_x = xnudge2, size = sz1) +
+  labs(x = "Pulmonary contusion no/yes", y = "days on respirator")
+
+
+```
+
+
+#### Linear model, data from both groups, y = time after surgery for the Sx group and total respiratory time for noSx group
+
+
+```{r lm_newtime, eval=T, echo=F, fig.height = 4, fig.width = 8}
+
+mnt.full <- lm(newtime ~ group + age + GCS + female + Tracheotomy + 
+                 frac.Sternum + Lung.contusion + Pneumonia + 
+                 Neurology, data = dat.t[dat.t$Death != "1",])
+
+summary(mnt.full)
+# run backward selection
+mnt.bkw <-  step(mnt.full)
+summary(mnt.bkw)
+
+cat("Fine tuning: remove variables with p > 0.05")
+mnt.bkw.tune <- lm(newtime ~ group + Tracheotomy + Lung.contusion, 
+                   data = dat.t[dat.t$Death != "1",])
+
+summary(mnt.bkw.tune)
+lrtest(mnt.bkw, mnt.bkw.tune)
+confint(mnt.bkw.tune)
+cat("Residual plots of the reduced model")
+par(mfrow=c(2,2))
+plot(mnt.bkw.tune)
+
+par(mfrow=c(1,1))
+
+
+g3 <- ggplot(dat.nodeath, aes(x=Tracheotomy, y=newtime, label = pairs)) +
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=group)) + geom_text(nudge_x = xnudge2, size = sz1) +
+  labs(x = "Tracheotomy no/yes", y = "days on respirator") 
+  
+g4 <- ggplot(dat.nodeath, aes(x=Lung.contusion, y=newtime, label = pairs)) +
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=group)) + geom_text(nudge_x = xnudge2, size = sz1) +
+  labs(x = "Pulmonary contusion no/yes", y = "days on respirator")
+
+# total time for both groups
+ggarrange(g1,g2, nrow = 1, ncol = 2)
+
+# total time for NoSx, newtime for Sx
+ggarrange(g3,g4, nrow = 1, ncol = 2)
+
+```
+
+
+
+## Linear regression analysis of groups individually
+
+Approach: For each group (Sx or noSx) try to find variables that have nn influence on the time on the respirator in order to identify possible markers for a good or a poor course of disease.    
+
+NOTE: due to the small number of observations these results have to be interpreted with caution.
+
+### Data from noSx group only, y = total time
+
+```{r nobs_nSx, eval=T, echo=F}
+# the number of individuals in nSx group
+nobs.nSx <- nrow(d.nSx)
+# the number of individuals in nSx group without deceased individuals
+d.nSx.ndec <- d.nSx[d.nSx$Death != "1",]
+nobs.nSx.ndec <- nrow(d.nSx.ndec)
+
+```
+
+
+The noSx group consists of only `r nobs.nSx.ndec` individuals when deceased 
+patients are excluded. This limits the number of parameters that we can 
+estimate significantly.
+
+
+```{r no_sx, eval=T, echo=F}
+# we limit the number of parameters 
+mnS.full <- lm(Respirator.time ~ Tracheotomy + frac.Sternum + Lung.contusion + 
+                 Pneumonia, data = d.nSx.ndec)
+summary(mnS.full)
+
+mnS.bkw <- step(mnS.full)
+summary(mnS.bkw)
+
+cat("Fine tuning: remove variables with p > 0.05")
+mnS.bkw.tune <- lm(Respirator.time ~ Tracheotomy, data = d.nSx.ndec)
+summary(mnS.bkw.tune)
+lrtest(mnS.full, mnS.bkw.tune)
+confint(mnS.bkw.tune)
+
+par(mfrow = c(2,2))
+cat("Residual plots of the reduced model")
+plot(mnS.bkw.tune)
+
+par(mfrow = c(1,1))
+
+p.trach <- ggplot(d.nSx.ndec, aes(x=Tracheotomy, y=Respirator.time, label = pairs)) + 
+  geom_boxplot() + geom_point(size = sz2) + geom_text(nudge_x = xnudge2, size = sz1) +
+  labs(x = "Tracheotomy no/yes", y = "days on respirator")
+
+# p.pneu <- ggplot(d.nSx.ndec, aes(x=Pneumonia, y=Respirator.time, label = pairs)) + 
+#   geom_boxplot() + geom_point(size = sz2) + geom_text(nudge_x = xnudge2, size = sz1) +
+#   labs(x = "Pneumonia no/yes", y = "days on respirator")
+
+
+ggarrange(p.trach, nrow = 1, ncol = 1)
+
+
+
+```
+
+
+
+### Data from Sx group only, y = time after surgery (newtime)
+
+```{r nobs_Sx, eval=T, echo=F}
+# the number of individuals in nSx group
+nobs.Sx <- nrow(d.Sx)
+# the number of individuals in nSx group without deceased individuals
+d.Sx.ndec <- d.Sx[d.Sx$Death != "1",]
+nobs.Sx.ndec <- nrow(d.Sx.ndec)
+
+```
+
+
+The Sx group consists of `r nobs.Sx.ndec` individuals when deceased patients 
+are excluded.
+
+
+```{r sx_all, eval=T, echo=F}
+
+mS.full <- lm(newtime ~ age + GCS + female + Tracheotomy + frac.Sternum + 
+                Lung.contusion + Pneumonia + Neurology, data = d.Sx.ndec)
+summary(mS.full)
+
+par(mfrow = c(2,2))
+# backward selection
+mS.bkw = step(mS.full, direction = 'backward')
+summary(mS.bkw)
+
+lrtest(mS.full, mS.bkw)
+
+confint(mS.bkw)
+
+cat("Residual plots of the reduced model")
+par(mfrow = c(2,2))
+plot(mS.bkw)
+
+
+d.Sx.ndec$otl <- ifelse(d.Sx.ndec$pairs == "I", 0,1)
+d.Sx.ndec$otl <- as.factor(d.Sx.ndec$otl)
+
+xnudge1 = 1.4
+xnudge2 = 0.1
+sz1 = 3
+sz2 = 1.2
+
+p.age <- ggplot(d.Sx.ndec, aes(x=Resp.Time.after.OR, y=age, label = pairs, colour = otl)) + 
+  geom_text(nudge_x = xnudge1, size = sz1) + geom_point(size = sz2) + 
+  theme(legend.position = "none")
+
+p.fem <- ggplot(d.Sx.ndec, aes(x=female, y=Resp.Time.after.OR)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) + 
+  theme(legend.position = "none")
+
+p.stern <- ggplot(d.Sx.ndec, aes(x=frac.Sternum, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) + 
+  theme(legend.position = "none")
+
+p.lung <- ggplot(d.Sx.ndec, aes(x=Lung.contusion, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.pneu <- ggplot(d.Sx.ndec, aes(x=Pneumonia, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.trach <- ggplot(d.Sx.ndec, aes(x=Tracheotomy, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.neuro <- ggplot(d.Sx.ndec, aes(x=Neurology, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2, aes(fill=otl)) + 
+  geom_text(aes(label = pairs, colour = otl), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.gcs <- ggplot(d.Sx.ndec, aes(x=Resp.Time.after.OR, y=GCS, label = pairs, colour = otl)) + 
+  geom_text(nudge_x = xnudge1, size = sz1) + geom_point(size = sz2) + 
+  theme(legend.position = "none")
+
+ggarrange(p.age, p.fem, p.stern, p.lung, p.pneu, p.trach, p.neuro, p.gcs, nrow = 3, ncol = 3)
+
+```
+
+### Data from Sx group only, individual I excluded, y = time after surgery (newtime)
+Patient I behaves differently than the rest of the Sx group: Patient I suffered from a lung contusion, spent the longest period of the entire group at the respirator (24 days) after surgery and received a tracheotomy, but had a GCS of 15 at admission to the hospital and no complications. Medical records revealed that this patient underwent a combined surgery (Rippenstabilisation und 3-fach Bypassoperation) and suffered from a ‘post-operativem Delir’ which was most probably induced by the long and complex surgery. The following analysis excludes patient I.
+
+
+```{r Sx_removeOurlier, eval=T, echo=F}
+
+d.Sx.noI <- d.Sx.ndec[-c(10),]
+
+mS.nI.full <- lm(newtime ~ age + GCS + female + Tracheotomy + frac.Sternum + 
+                   Lung.contusion + Pneumonia + Neurology, data = d.Sx.noI)
+summary(mS.nI.full)
+
+mS.nI.bkw = step(mS.nI.full, direction = 'backward')
+summary(mS.nI.bkw)
+
+cat("Fine tuning: remove variables with p > 0.05")
+mS.nI.bkw.tune <- lm(formula = newtime ~ GCS + Tracheotomy + Pneumonia, data = d.Sx.noI)
+summary(mS.nI.bkw.tune)
+lrtest(mS.nI.full, mS.nI.bkw.tune)
+
+confint(mS.nI.bkw.tune)
+
+cat("Residual plots of the reduced model")
+par(mfrow = c(2,2))
+plot(mS.nI.bkw.tune)
+
+
+p.age <- ggplot(d.Sx.noI, aes(x=Resp.Time.after.OR, y=age, label = pairs)) + 
+  geom_text(nudge_x = xnudge1, size = sz1) + geom_point(size = sz2) + 
+  theme(legend.position = "none")
+
+p.fem <- ggplot(d.Sx.noI, aes(x=female, y=Resp.Time.after.OR)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) + 
+  theme(legend.position = "none")
+
+p.stern <- ggplot(d.Sx.noI, aes(x=frac.Sternum, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) + 
+  theme(legend.position = "none")
+
+p.lung <- ggplot(d.Sx.noI, aes(x=Lung.contusion, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.pneu <- ggplot(d.Sx.noI, aes(x=Pneumonia, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.trach <- ggplot(d.Sx.noI, aes(x=Tracheotomy, y=Resp.Time.after.OR)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.neuro <- ggplot(d.Sx.noI, aes(x=Neurology, y=Resp.Time.after.OR, label = pairs)) + 
+  geom_boxplot() + geom_point(pch=21, size = sz2) + 
+  geom_text(aes(label = pairs), nudge_x = xnudge2, size = sz1) +  
+  theme(legend.position = "none")
+
+p.gcs <- ggplot(d.Sx.noI, aes(x=Resp.Time.after.OR, y=GCS, label = pairs)) + 
+  geom_text(nudge_x = xnudge1, size = sz1) + geom_point(size = sz2) + 
+  theme(legend.position = "none")
+
+ggarrange(p.age, p.fem, p.stern, p.lung, p.pneu, p.trach, p.neuro, p.gcs, nrow = 3, ncol = 3)
+
+```
+
+```{r sessioninfo, eval=T , echo=F}
+
+sessionInfo()
+
+```
+
